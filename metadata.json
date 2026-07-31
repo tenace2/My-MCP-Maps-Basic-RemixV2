@@ -1,0 +1,9 @@
+{
+  "name": "Remix: Remix: MCP Maps Basic",
+  "description": "Query the globe and get answers instantly visualized, with Gemini grounded by MCP.",
+  "requestFramePermissions": [],
+  "prompt": "",
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
