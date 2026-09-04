@@ -2,30 +2,63 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
 */
-import { Client } from "@modelcontextprotocol/sdk/client/index.js";
-import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
-import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { GoogleGenAI, mcpToTool } from '@google/genai';
 import { ChatState, marked, Playground } from './playground';
+import { registerSW } from 'virtual:pwa-register';
 
-import { startMcpGoogleMapServer } from './mcp_maps_server';
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
-/* --------- */
+registerSW({ immediate: true });
 
+async function sendPromptToBackend(prompt: string): Promise<{ reply: string; mapHint: string; places: string[]; debug: string; statusCode: number; durationMs: number; rawResponse: string; model: string; inputTokens: number; outputTokens: number; errorStatus: number | null; errorMessage: string; errorDetails: string; usageToday: { date: string; attempted: number; success: number; error: number } | null }> {
+  const startedAt = performance.now();
+  const response = await fetch(`${API_BASE_URL}/api/chat`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ prompt }),
+  });
 
-async function startClient(transport: Transport) {
-  const client = new Client({ name: "AI Studio", version: "1.0.0" });
-  await client.connect(transport);
-  return client;
+  if (!response.ok) {
+    const errorData = await response.json().catch(() => ({}));
+    const errorMessage = typeof errorData.errorMessage === 'string'
+      ? errorData.errorMessage
+      : typeof errorData.error === 'string'
+        ? errorData.error
+        : 'Unable to reach the backend.';
+    const errorDetails = typeof errorData.errorDetails === 'string'
+      ? errorData.errorDetails
+      : '';
+    const errorStatus = typeof errorData.errorStatus === 'number' ? errorData.errorStatus : response.status;
+    const usageToday = errorData.usageToday && typeof errorData.usageToday === 'object' ? errorData.usageToday : null;
+
+    const error = new Error(errorMessage) as Error & { status?: number; errorMessage?: string; errorDetails?: string; usageToday?: typeof usageToday };
+    error.status = errorStatus;
+    error.errorMessage = errorMessage;
+    error.errorDetails = errorDetails;
+    error.usageToday = usageToday;
+    throw error;
+  }
+
+  const data = await response.json();
+  const durationMs = Math.round(performance.now() - startedAt);
+  return {
+    reply: data.reply || 'No response from the backend.',
+    mapHint: typeof data.mapHint === 'string' ? data.mapHint : '',
+    places: Array.isArray(data.places) ? data.places.filter(Boolean) : [],
+    debug: typeof data.debug === 'string' ? data.debug : '',
+    statusCode: response.status,
+    durationMs,
+    rawResponse: JSON.stringify(data, null, 2),
+    model: typeof data.model === 'string' ? data.model : 'unknown',
+    inputTokens: typeof data.inputTokens === 'number' ? data.inputTokens : 0,
+    outputTokens: typeof data.outputTokens === 'number' ? data.outputTokens : 0,
+    errorStatus: typeof data.errorStatus === 'number' ? data.errorStatus : null,
+    errorMessage: typeof data.errorMessage === 'string' ? data.errorMessage : '',
+    errorDetails: typeof data.errorDetails === 'string' ? data.errorDetails : '',
+    usageToday: data.usageToday && typeof data.usageToday === 'object' ? data.usageToday : null,
+  };
 }
-
-/* ------------ */
-
-
-const SYSTEM_INSTRUCTIONS = `you're an extremely proficient with map and discovering interesting places.
-You can use tools to control the map.
-When asked a question try to use tools to show related informations on the map.
-Always explain what are you doing.`;
 
 const EXAMPLE_PROMPTS = [
   'Where is something cool to see',
@@ -42,33 +75,7 @@ const EXAMPLE_PROMPTS = [
   "Can you find a town or city with a really funny or unusual name and show it to me?"
 ];
 
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY,
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    },
-  },
-});
-
-function createAiChat(mcpClient: Client) {
-  return ai.chats.create({
-    model: 'gemini-3.6-flash',
-    config: {
-      systemInstruction: SYSTEM_INSTRUCTIONS,
-      tools: [mcpToTool(mcpClient)],
-    },
-  });
-}
-
-function camelCaseToDash(str: string): string {
-  return str
-    .replace(/([a-z])([A-Z])/g, '$1-$2')
-    .replace(/([A-Z])([A-Z][a-z])/g, '$1-$2')
-    .toLowerCase();
-}
-
-document.addEventListener('DOMContentLoaded', async (event) => {
+document.addEventListener('DOMContentLoaded', async () => {
   const rootElement = document.querySelector('#root')! as HTMLElement;
 
   const playground = new Playground();
@@ -77,114 +84,72 @@ document.addEventListener('DOMContentLoaded', async (event) => {
   playground.renderMapQuery({ location: 'London' });
 
 
-  // ---------
-
-  const [transportA, transportB] = InMemoryTransport.createLinkedPair();
-
-  void startMcpGoogleMapServer(transportA, (params: { location?: string, origin?: string, destination?: string, search?: string }) => {
-    playground.renderMapQuery(params);
-  });
-
-  const mcpClient = await startClient(transportB);
-
-  // --------
-
-  const aiChat = createAiChat(mcpClient);
-
   playground.sendMessageHandler = async (
     input: string,
     role: string,
   ) => {
-    console.log(
-      'sendMessageHandler',
-      input,
-      role
-    );
+    console.log('sendMessageHandler', input, role);
 
     const { thinking, text } = playground.addMessage('assistant', '');
-    const message = [];
-
-    message.push({
-      role,
-      text: input,
-    });
-
     playground.setChatState(ChatState.GENERATING);
-
     text.innerHTML = '...';
 
-    let newCode = '';
-    let thought = '';
-
-
     try {
-      const res = await aiChat.sendMessageStream({ message });
+      const result = await sendPromptToBackend(input);
+      const placeList = result.places.length > 0
+        ? `\n\nPlaces to explore:\n- ${result.places.join('\n- ')}`
+        : '';
+      text.innerHTML = await marked.parse(`${result.reply}${placeList}`);
 
-      for await (const chunk of res) {
-        for (const candidate of chunk.candidates ?? []) {
-          for (const part of candidate.content?.parts ?? []) {
-            if (part.functionCall) {
-              console.log('FUNCTION CALL:', part.functionCall.name, part.functionCall.args);
-              const toolName = camelCaseToDash(part.functionCall.name!).replace(/-/g, '_');
-              const mcpCall = {
-                name: toolName,
-                arguments: part.functionCall.args,
-              };
-
-              try {
-                await mcpClient.callTool({
-                  name: toolName,
-                  arguments: (part.functionCall.args as Record<string, any>) || {},
-                });
-              } catch (toolErr) {
-                console.error('Error invoking MCP tool:', toolErr);
-              }
-
-              const explanation = 'Calling function:\n```json\n' + JSON.stringify(mcpCall, null, 2) + '\n```';
-              const { text: toolText } = playground.addMessage('assistant', '');
-              toolText.innerHTML = await marked.parse(explanation);
-            }
-
-            if (part.thought) {
-              playground.setChatState(ChatState.THINKING);
-              if (part.text) {
-                thought += part.text;
-                thinking.innerHTML = await marked.parse(thought);
-                thinking.parentElement!.classList.remove('hidden');
-              }
-            } else if (part.text) {
-              playground.setChatState(ChatState.EXECUTING);
-              newCode += part.text;
-              text.innerHTML = await marked.parse(newCode);
-            }
-            playground.scrollToTheEnd();
-          }
-        }
+      if (result.mapHint.trim()) {
+        const searchQuery = result.mapHint.trim();
+        playground.renderMapQuery({ search: searchQuery });
       }
-    } catch (e: any) {
-      console.error('GenAI SDK Error:', e.message);
-      let message = e.message;
-      const splitPos = e.message.indexOf('{');
-      if (splitPos > -1) {
-        const msgJson = e.message.substring(splitPos);
-        try {
-          const sdkError = JSON.parse(msgJson);
-          if (sdkError.error) {
-            message = sdkError.error.message;
-            message = await marked.parse(message);
-          }
-        } catch (e) {
-          console.error('Unable to parse the error message:', e);
-        }
-      }
-      const { text } = playground.addMessage('error', '');
-      text.innerHTML = message;
+
+      playground.setDiagnostics({
+        status: 'ok',
+        responseText: result.rawResponse,
+        mapHint: result.mapHint,
+        places: result.places,
+        debug: `${result.debug} | status=${result.statusCode} | duration=${result.durationMs}ms`,
+        statusCode: result.statusCode,
+        durationMs: result.durationMs,
+        model: result.model,
+        inputTokens: result.inputTokens,
+        outputTokens: result.outputTokens,
+        errorStatus: result.errorStatus,
+        errorMessage: result.errorMessage,
+        errorDetails: result.errorDetails,
+        usageToday: result.usageToday,
+      });
+    } catch (error: any) {
+      console.error('Backend request failed:', error);
+      const errorMessage = typeof error?.errorMessage === 'string' ? error.errorMessage : error.message || 'Unable to reach the backend.';
+      const errorDetails = typeof error?.errorDetails === 'string' ? error.errorDetails : '';
+      const errorStatus = typeof error?.status === 'number' ? error.status : 0;
+      const usageToday = error?.usageToday && typeof error.usageToday === 'object' ? error.usageToday : null;
+      const { text: errorText } = playground.addMessage('error', '');
+      errorText.innerHTML = errorMessage;
+      playground.setDiagnostics({
+        status: 'error',
+        responseText: errorMessage,
+        mapHint: '',
+        places: [],
+        debug: `${errorMessage}${errorStatus ? ` | status=${errorStatus}` : ''}`,
+        statusCode: errorStatus,
+        durationMs: 0,
+        model: 'unknown',
+        inputTokens: 0,
+        outputTokens: 0,
+        errorStatus,
+        errorMessage,
+        errorDetails,
+        usageToday,
+      });
     }
 
-    // close thinking block
     thinking.parentElement!.removeAttribute('open');
 
-    // If the answer was just code
     if (text.innerHTML.trim().length === 0) {
       text.innerHTML = 'Done';
     }

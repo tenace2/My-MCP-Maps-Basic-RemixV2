@@ -75,6 +75,22 @@ export class Playground extends LitElement {
   @state() selectedChatTab = ChatTab.GEMINI;
   @state() inputMessage = '';
   @state() messages: HTMLElement[] = [];
+  @state() diagnostics = {
+    status: 'idle',
+    responseText: '',
+    mapHint: '',
+    places: [] as string[],
+    debug: '',
+    statusCode: 0,
+    durationMs: 0,
+    model: 'unknown',
+    inputTokens: 0,
+    outputTokens: 0,
+    errorStatus: null as number | null,
+    errorMessage: '',
+    errorDetails: '',
+    usageToday: null as { date: string; attempted: number; success: number; error: number } | null,
+  };
 
   private readonly previewFrame: HTMLIFrameElement =
     document.createElement('iframe');
@@ -102,9 +118,20 @@ export class Playground extends LitElement {
     this.chatState = state;
   }
 
+  setDiagnostics(diagnostics: typeof this.diagnostics) {
+    this.diagnostics = diagnostics;
+  }
+
   renderMapQuery(location: MapParams) {
-    const MAPS_API_KEY = 'AIzaSyAI4U2ClAjhiM2lcWO5F07-vZVIaVuqtEc';
+    const MAPS_API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY ?? '';
     let src = '';
+
+    if (!MAPS_API_KEY) {
+      console.warn('Missing VITE_GOOGLE_MAPS_API_KEY. Set it in .env.local to display embedded Google Maps.');
+      this.previewFrame.src = '';
+      return;
+    }
+
     if (location.location) {
       src = `https://www.google.com/maps/embed/v1/place?key=${MAPS_API_KEY}&q=${encodeURIComponent(location.location)}`;
     } else if (location.origin && location.destination) {
@@ -270,7 +297,38 @@ export class Playground extends LitElement {
         </div>
       </div>
 
-      <div class="main-container"> ${this.previewFrame} </div>
+      <div class="main-container">
+        ${this.previewFrame}
+        <div class="debug-panel">
+          <h3>Developer diagnostics</h3>
+          <div class="debug-content">
+            <p><strong>Status:</strong> ${this.diagnostics.status}</p>
+            <p><strong>HTTP status:</strong> ${this.diagnostics.statusCode || 'n/a'}</p>
+            <p><strong>Duration:</strong> ${this.diagnostics.durationMs ? `${this.diagnostics.durationMs}ms` : 'n/a'}</p>
+            <p><strong>Model:</strong> ${this.diagnostics.model || 'unknown'}</p>
+            <p><strong>Input tokens:</strong> ${this.diagnostics.inputTokens ?? 0}</p>
+            <p><strong>Output tokens:</strong> ${this.diagnostics.outputTokens ?? 0}</p>
+            <p><strong>Map hint:</strong> ${this.diagnostics.mapHint || 'None'}</p>
+            <p><strong>Debug:</strong> ${this.diagnostics.debug || 'None'}</p>
+            <p><strong>Error status:</strong> ${this.diagnostics.errorStatus ?? 'n/a'}</p>
+            <p><strong>Error message:</strong> ${this.diagnostics.errorMessage || 'None'}</p>
+            <p><strong>Error details:</strong> ${this.diagnostics.errorDetails || 'None'}</p>
+            <p><strong>Gemini usage today:</strong> ${this.diagnostics.usageToday
+              ? `${this.diagnostics.usageToday.attempted} attempted (${this.diagnostics.usageToday.success} success, ${this.diagnostics.usageToday.error} error) on ${this.diagnostics.usageToday.date}`
+              : 'Unknown'}</p>
+            <p><strong>Places:</strong></p>
+            <ul>
+              ${this.diagnostics.places.length > 0
+                ? this.diagnostics.places.map((place) => html`<li>${place}</li>`)
+                : html`<li>None</li>`}
+            </ul>
+            <details>
+              <summary>Response payload</summary>
+              <pre>${this.diagnostics.responseText || 'No response yet.'}</pre>
+            </details>
+          </div>
+        </div>
+      </div>
     </div>`;
   }
 }
