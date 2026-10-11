@@ -9,7 +9,7 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 registerSW({ immediate: true });
 
-async function sendPromptToBackend(prompt: string): Promise<{ reply: string; mapHint: string; places: string[]; debug: string; statusCode: number; durationMs: number; rawResponse: string; model: string; inputTokens: number; outputTokens: number; errorStatus: number | null; errorMessage: string; errorDetails: string; usageToday: { date: string; attempted: number; success: number; error: number } | null }> {
+async function sendPromptToBackend(prompt: string): Promise<{ reply: string; mapHint: string; mapMode: string; places: string[]; debug: string; statusCode: number; durationMs: number; rawResponse: string; model: string; inputTokens: number; outputTokens: number; errorStatus: number | null; errorMessage: string; errorDetails: string; usageToday: { date: string; attempted: number; success: number; error: number } | null }> {
   const startedAt = performance.now();
   const response = await fetch(`${API_BASE_URL}/api/chat`, {
     method: 'POST',
@@ -45,6 +45,7 @@ async function sendPromptToBackend(prompt: string): Promise<{ reply: string; map
   return {
     reply: data.reply || 'No response from the backend.',
     mapHint: typeof data.mapHint === 'string' ? data.mapHint : '',
+    mapMode: data.mapMode === 'place' ? 'place' : 'search',
     places: Array.isArray(data.places) ? data.places.filter(Boolean) : [],
     debug: typeof data.debug === 'string' ? data.debug : '',
     statusCode: response.status,
@@ -103,7 +104,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
       if (result.mapHint.trim()) {
         const searchQuery = result.mapHint.trim();
-        playground.renderMapQuery({ search: searchQuery });
+        // Embed "search" mode can zoom out to the world for a single named place.
+        playground.renderMapQuery(
+          result.mapMode === 'place' ? { location: searchQuery } : { search: searchQuery },
+        );
       }
 
       playground.setDiagnostics({
