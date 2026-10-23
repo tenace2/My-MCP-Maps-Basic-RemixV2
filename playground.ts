@@ -79,6 +79,7 @@ export class Playground extends LitElement {
     status: 'idle',
     responseText: '',
     mapHint: '',
+    coordinates: null as {latitude: number; longitude: number; formattedAddress: string} | null,
     places: [] as string[],
     debug: '',
     statusCode: 0,
@@ -134,6 +135,9 @@ export class Playground extends LitElement {
 
     if (location.location) {
       src = `https://www.google.com/maps/embed/v1/place?key=${MAPS_API_KEY}&q=${encodeURIComponent(location.location)}`;
+      if (location.center) {
+        src += `&center=${location.center.latitude},${location.center.longitude}&zoom=13`;
+      }
     } else if (location.origin && location.destination) {
       src = `https://www.google.com/maps/embed/v1/directions?key=${MAPS_API_KEY}&origin=${encodeURIComponent(location.origin)}&destination=${encodeURIComponent(location.destination)}`;
     } else if (location.search) {
@@ -309,6 +313,9 @@ export class Playground extends LitElement {
             <p><strong>Input tokens:</strong> ${this.diagnostics.inputTokens ?? 0}</p>
             <p><strong>Output tokens:</strong> ${this.diagnostics.outputTokens ?? 0}</p>
             <p><strong>Map hint:</strong> ${this.diagnostics.mapHint || 'None'}</p>
+            <p><strong>Lat/Long:</strong> ${this.diagnostics.coordinates
+              ? `${this.diagnostics.coordinates.latitude}, ${this.diagnostics.coordinates.longitude} (${this.diagnostics.coordinates.formattedAddress})`
+              : 'None'}</p>
             <p><strong>Debug:</strong> ${this.diagnostics.debug || 'None'}</p>
             <p><strong>Error status:</strong> ${this.diagnostics.errorStatus ?? 'n/a'}</p>
             <p><strong>Error message:</strong> ${this.diagnostics.errorMessage || 'None'}</p>

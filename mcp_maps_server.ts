@@ -10,6 +10,7 @@ import {z} from 'zod';
 
 export interface MapParams {
   location?: string;
+  center?: {latitude: number; longitude: number};
   search?: string;
   origin?: string;
   destination?: string;

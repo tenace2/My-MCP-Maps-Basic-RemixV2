@@ -9,7 +9,9 @@ const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || '';
 
 registerSW({ immediate: true });
 
-async function sendPromptToBackend(prompt: string): Promise<{ reply: string; mapHint: string; mapMode: string; places: string[]; debug: string; statusCode: number; durationMs: number; rawResponse: string; model: string; inputTokens: number; outputTokens: number; errorStatus: number | null; errorMessage: string; errorDetails: string; usageToday: { date: string; attempted: number; success: number; error: number } | null }> {
+type Coordinates = { latitude: number; longitude: number; formattedAddress: string };
+
+async function sendPromptToBackend(prompt: string): Promise<{ reply: string; mapHint: string; mapMode: string; coordinates: Coordinates | null; places: string[]; debug: string; statusCode: number; durationMs: number; rawResponse: string; model: string; inputTokens: number; outputTokens: number; errorStatus: number | null; errorMessage: string; errorDetails: string; usageToday: { date: string; attempted: number; success: number; error: number } | null }> {
   const startedAt = performance.now();
   const response = await fetch(`${API_BASE_URL}/api/chat`, {
     method: 'POST',
@@ -46,6 +48,9 @@ async function sendPromptToBackend(prompt: string): Promise<{ reply: string; map
     reply: data.reply || 'No response from the backend.',
     mapHint: typeof data.mapHint === 'string' ? data.mapHint : '',
     mapMode: data.mapMode === 'place' ? 'place' : 'search',
+    coordinates: data.coordinates && typeof data.coordinates.latitude === 'number' && typeof data.coordinates.longitude === 'number'
+      ? data.coordinates
+      : null,
     places: Array.isArray(data.places) ? data.places.filter(Boolean) : [],
     debug: typeof data.debug === 'string' ? data.debug : '',
     statusCode: response.status,
@@ -100,13 +105,18 @@ document.addEventListener('DOMContentLoaded', async () => {
       const placeList = result.places.length > 0
         ? `\n\nPlaces to explore:\n- ${result.places.join('\n- ')}`
         : '';
-      text.innerHTML = await marked.parse(`${result.reply}${placeList}`);
+      const coordLine = result.coordinates
+        ? `\n\nLat/Long: ${result.coordinates.latitude.toFixed(5)}, ${result.coordinates.longitude.toFixed(5)}`
+        : '';
+      text.innerHTML = await marked.parse(`${result.reply}${coordLine}${placeList}`);
 
       if (result.mapHint.trim()) {
         const searchQuery = result.mapHint.trim();
         // Embed "search" mode can zoom out to the world for a single named place.
         playground.renderMapQuery(
-          result.mapMode === 'place' ? { location: searchQuery } : { search: searchQuery },
+          result.mapMode === 'place'
+            ? { location: searchQuery, center: result.coordinates ?? undefined }
+            : { search: searchQuery },
         );
       }
 
@@ -114,6 +124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         status: 'ok',
         responseText: result.rawResponse,
         mapHint: result.mapHint,
+        coordinates: result.coordinates,
         places: result.places,
         debug: `${result.debug} | status=${result.statusCode} | duration=${result.durationMs}ms`,
         statusCode: result.statusCode,
@@ -138,6 +149,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         status: 'error',
         responseText: errorMessage,
         mapHint: '',
+        coordinates: null,
         places: [],
         debug: `${errorMessage}${errorStatus ? ` | status=${errorStatus}` : ''}`,
         statusCode: errorStatus,
